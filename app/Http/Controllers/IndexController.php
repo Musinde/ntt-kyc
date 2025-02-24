@@ -15,6 +15,7 @@ class IndexController extends Controller
 
     protected $rekognition;
     protected $bucket;
+    protected $liveness;
 
 
     public function __construct()
@@ -28,12 +29,22 @@ class IndexController extends Controller
             ]
         ]);
 
+        $this->liveness = new RekognitionClient([
+            'region' => env('AWS_LIVENESS_REGION'),
+            'version' => 'latest',
+            'credentials' => [
+                'key'    => env('AWS_ACCESS_KEY_ID'),
+                'secret' => env('AWS_SECRET_ACCESS_KEY'),
+            ]
+        ]);
+
         $this->bucket = env('AWS_BUCKET');
     }
 
-    public function signups(){
-        $users = User::orderBy('id','DESC')->get();
-        return view('signups',compact('users'));
+    public function signups()
+    {
+        $users = User::orderBy('id', 'DESC')->get();
+        return view('signups', compact('users'));
     }
 
     public function index()
@@ -49,43 +60,6 @@ class IndexController extends Controller
     public function takeSelfie()
     {
         return view('selfie');
-    }
-
-    public function verifyLiveness(Request $request)
-    {
-        // Extract the base64 encoded image from the request
-        $imageData = $request->input('image');
-        $imageData = str_replace('data:image/png;base64,', '', $imageData);
-        $imageData = base64_decode($imageData);
-
-        try {
-            // Initialize the Rekognition client
-            $rekognition = new RekognitionClient([
-                'region' => env('AWS_DEFAULT_REGION'),
-                'version' => 'latest',
-                'credentials' => [
-                    'key' => env('AWS_ACCESS_KEY_ID'),
-                    'secret' => env('AWS_SECRET_ACCESS_KEY'),
-                ]
-            ]);
-
-            // Call Rekognition's DetectLiveness API
-            $result = $rekognition->detectLiveness([
-                'Video' => [
-                    'Bytes' => $imageData,
-                ],
-            ]);
-
-            // Check liveness confidence score
-            $confidence = $result['Confidence'] ?? 0;
-            if ($confidence > 90) { // Example threshold for liveness detection
-                return response()->json(['success' => true]);
-            } else {
-                return response()->json(['success' => false, 'message' => 'Liveness detection confidence too low.']);
-            }
-        } catch (\Exception $e) {
-            return response()->json(['success' => false, 'message' => 'Error in liveness detection: ' . $e->getMessage()]);
-        }
     }
 
 
@@ -116,7 +90,7 @@ class IndexController extends Controller
             $result = $textractClient->analyzeDocument([
                 'Document' => [
                     'S3Object' => [
-                        'Bucket' => env('AWS_BUCKET'),
+                        'Bucket' => $this->bucket,
                         'Name' => $filePath,
                     ],
                 ],
@@ -178,7 +152,7 @@ class IndexController extends Controller
                 'id_url' => $path,
             ]);
 
-            session()->put('user',$user);
+            session()->put('user', $user);
 
             $class = "image-preview-img";
             $img = (string) view('image-preview', compact('class', 'path', 'filePath'));
@@ -197,13 +171,13 @@ class IndexController extends Controller
             $result = $this->rekognition->compareFaces([
                 'SourceImage' => [
                     'S3Object' => [
-                        'Bucket' => env('AWS_BUCKET'),
+                        'Bucket' => $this->bucket,
                         'Name' => $detectedFace,
                     ],
                 ],
                 'TargetImage' => [
                     'S3Object' => [
-                        'Bucket' => env('AWS_BUCKET'),
+                        'Bucket' => $this->bucket,
                         'Name' => $selfie,
                     ],
                 ],
@@ -221,6 +195,21 @@ class IndexController extends Controller
         } catch (\Exception $e) {
             logger($e);
             return false;
+        }
+    }
+
+    public function initiateLiveness(Request $request)
+    {
+
+
+        try {
+            $user = session('user');
+            $user->liveness_passed = 1;
+            $user->save();
+
+            return response()->json(['success' => true]);
+        } catch (\Exception $e) {
+            return response()->json(['success' => false, 'error' => $e->getMessage()]);
         }
     }
 
@@ -348,49 +337,6 @@ class IndexController extends Controller
         } catch (\Exception $e) {
             logger($e);
             return response()->json(['message' => 'Failed to delete. Please try again.'], 500);
-        }
-    }
-
-    public function initiateLiveness(Request $request)
-    {
-        try {
-            // Step 1: Start a Face Liveness Session
-            $result = $this->rekognition->createFaceLivenessSession([
-                'ClientRequestToken' => uniqid(), // Unique identifier for the request
-            ]);
-
-            // Get the session ID to use for checking the result later
-            $sessionId = $result['SessionId'];
-            $videoUrl = $result['VideoUrl'];
-
-            return response()->json([
-                'sessionId' => $sessionId,
-                'videoUrl' => $videoUrl,
-            ]);
-        } catch (\Exception $e) {
-            logger($e);
-            return response()->json(['error' => 'Error initiating liveness detection: ' . $e->getMessage()], 500);
-        }
-    }
-
-    public function checkLiveness($sessionId)
-    {
-        try {
-            // Step 2: Check the Liveness Detection Results
-            $result = $this->rekognition->getFaceLivenessSessionResults([
-                'SessionId' => $sessionId,
-            ]);
-
-            $confidence = $result['Confidence'] ?? 0;
-            $status = $result['Status'];
-
-            return response()->json([
-                'success' => $status === 'SUCCEEDED',
-                'confidence' => $confidence,
-                'status' => $status,
-            ]);
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Error checking liveness results: ' . $e->getMessage()], 500);
         }
     }
 }

@@ -24,8 +24,6 @@ Route::get('/facial-compare', [IndexController::class, 'facialCompare'])->name('
 Route::get('/detect-face', [IndexController::class, 'detectFace']);
 
 Route::get('/selfie', [IndexController::class, 'takeSelfie']);
-Route::post('/verify-liveness', [IndexController::class, 'verifyLiveness'])->name('selfie.verifyLiveness');
 Route::post('/upload-selfie', [IndexController::class, 'uploadSelfie']);
 
 Route::post('/initiate-liveness', [IndexController::class, 'initiateLiveness'])->name('liveness.initiate');
-Route::get('/check-liveness/{sessionId}', [IndexController::class, 'checkLiveness'])->name('liveness.check');
